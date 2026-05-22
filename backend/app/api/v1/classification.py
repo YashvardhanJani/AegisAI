@@ -1,3 +1,92 @@
+"""
+classification.py — EU AI Act Risk Classification API
+======================================================
+
+This module exposes the REST API endpoints that classify AI systems under the
+EU AI Act risk framework. Classification is powered by an LLM (Gemini / OpenAI-
+compatible) that reasons over the system's metadata against the relevant EU AI
+Act articles and returns a structured risk verdict with a human-readable rationale.
+
+EU AI Act Legal Basis
+---------------------
+The classification logic maps to the following articles and annexes:
+
+- **Article 5  — Prohibited AI Practices**
+  AI systems that fall under Art. 5 are assigned the ``Unacceptable`` risk level
+  and cannot be deployed in the EU. Examples include social scoring by public
+  authorities and real-time remote biometric identification in public spaces.
+
+- **Article 6 + Annex III — High-Risk AI Systems**
+  Art. 6 defines the two-step test for high-risk classification:
+  (1) the system is a safety component of a product covered by Union harmonisation
+  legislation listed in Annex II, or is itself such a product; or
+  (2) the system falls within one of the eight domains listed in Annex III
+  (e.g., biometrics, critical infrastructure, education, employment, essential
+  private/public services, law enforcement, migration, justice).
+  Systems meeting either criterion are assigned the ``High`` risk level and must
+  comply with the full obligations in Chapter III (conformity assessment, technical
+  documentation, human oversight, etc.).
+
+- **Article 52 — Transparency Obligations for Certain AI Systems**
+  AI systems that interact with humans (chatbots), generate synthetic content
+  (deepfakes), or perform emotion recognition / biometric categorisation are
+  assigned the ``Limited`` risk level and must meet specific disclosure obligations.
+
+- **Minimal Risk (default)**
+  All other AI systems not captured by Art. 5, Art. 6, or Art. 52 are classified
+  as ``Minimal`` risk. No mandatory obligations apply, though voluntary codes of
+  conduct are encouraged.
+
+Risk Levels
+-----------
+AegisAI uses four risk levels, ordered from lowest to highest severity:
+
+1. ``Minimal``       — No mandatory EU AI Act obligations. Vast majority of AI
+                        applications (spam filters, AI in video games, etc.).
+2. ``Limited``       — Transparency obligations only (Art. 52). Must inform users
+                        they are interacting with AI.
+3. ``High``          — Full compliance regime (Art. 6 + Annex III). Requires
+                        technical documentation, conformity assessment, human
+                        oversight, and registration in the EU database.
+4. ``Unacceptable``  — Prohibited (Art. 5). Deployment in the EU is forbidden.
+
+Classification Flow
+-------------------
+1. Client submits AI system attributes (name, sector, use_case, intended_purpose,
+   capabilities, data types processed) to the classify endpoint.
+2. The endpoint builds a structured prompt embedding the system's metadata and the
+   relevant EU AI Act rules.
+3. The prompt is sent to the configured LLM (``app.modules.llm``) which returns a
+   JSON payload containing:
+   - ``risk_level``              — one of the four levels above
+   - ``classification_reasoning`` — plain-English rationale citing EU AI Act articles
+   - ``applicable_articles``     — list of articles that triggered the classification
+4. The response is validated via Pydantic and returned to the caller.
+5. In the ``/classify/{system_id}`` variant, the result is also persisted back to
+   the ``AISystem`` record in the database (``risk_level``, ``classification_reasoning``
+   fields on the ORM model).
+
+Endpoints
+---------
+- ``POST /classify``
+    Stateless classification — accepts a ``ClassifyRequest`` body and returns a
+    ``ClassifyResponse`` without touching the database. Useful for one-off checks
+    or external integrations.
+
+- ``POST /classify/{system_id}``
+    Persistent classification — loads the ``AISystem`` identified by ``system_id``
+    from the database, classifies it, and writes the result back. Requires the
+    caller to be the owner of the AI system (JWT-authenticated).
+
+Dependencies
+------------
+- ``app.modules.llm.client``           — LLM client (OpenAI-compatible)
+- ``app.models.ai_system.AISystem``    — ORM model updated by ``/classify/{system_id}``
+- ``app.schemas.classification.*``     — Pydantic request / response schemas
+- ``app.core.db.get_db``               — SQLAlchemy session dependency
+- ``app.core.security.get_current_user`` — JWT authentication dependency
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
